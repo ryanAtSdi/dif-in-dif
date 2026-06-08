@@ -1,0 +1,220 @@
+---
+title: "dif-in-dif"
+output: html_document
+date: "2026-06-08"
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(foreign, dplyr, ggplot2, tidyr, scales)
+
+#Helper function to interpret regression results
+interpret_did <- function(didreg, term_name = "treated:time") {
+  # 1. Extract the coefficients matrix from the summary object
+  coef_matrix <- summary(didreg)$coefficients
+  
+  # Check if the term exists in the model output
+  if (!term_name %in% rownames(coef_matrix)) {
+    stop(paste("The term '", term_name, "' was not found in your regression output."))
+  }
+  
+  # Extract point estimate and p-value
+  point_estimate <- coef_matrix[term_name, "Estimate"]
+  p_value <- coef_matrix[term_name, 4] # The 4th column contains the p-value
+  
+  # 2. Determine the custom significance level and the corresponding alpha
+  if (p_value < 0.01) {
+    sig_text <- "1% level (p < 0.01)"
+    conf_level <- 0.99
+  } else if (p_value < 0.05) {
+    sig_text <- "5% level (p < 0.05)"
+    conf_level <- 0.95
+  } else if (p_value < 0.10) {
+    sig_text <- "10% level (p < 0.10)"
+    conf_level <- 0.90
+  } else if (p_value < 0.15) {
+    sig_text <- "15% level (p < 0.15)"
+    conf_level <- 0.85
+  } else {
+    sig_text <- "not statistically significant even at the 15% level (p >= 0.15)"
+    conf_level <- 0.85 # Default to an 85% range for reference
+  }
+  
+  # 3. Calculate the confidence interval range based on that significance level
+  ci_bounds <- confint(didreg, parm = term_name, level = conf_level)
+  ci_lower <- ci_bounds[1]
+  ci_upper <- ci_bounds[2]
+  
+  # 4. Print the plain English interpretation
+  cat("==================================================================\n")
+  cat("             DIFFERENCE-IN-DIFFERENCES INTERPRETATION            \n")
+  cat("==================================================================\n\n")
+  
+  # Output 1: Significance
+  cat("1) Significance of the Impact:\n")
+  cat(paste0("   The p-value for the treatment impact is ", round(p_value, 4), ".\n"))
+  cat(paste0("   Therefore, the result is statistically significant at the ", sig_text, ".\n\n"))
+  
+  # Output 2: Point Estimate
+  cat("2) Point Estimate of the Impact:\n")
+  cat(paste0("   The point estimate is ", format(point_estimate, scientific = FALSE, big.mark = ","), ".\n"))
+  cat(paste0("   This means that the treatment caused an average change of \n",
+             "   ", format(point_estimate, scientific = FALSE, big.mark = ","), " units in the treatment group per unit of time, \n",
+             "   relative to how the control group changed over the same time period.\n\n"))
+  
+  # Output 3: Range of Impact
+  cat("3) Range of Impact:\n")
+  cat(paste0("   Based on the significance level determined above, we look at the ", (conf_level * 100), "% confidence interval.\n"))
+  cat(paste0("   We can be ", (conf_level * 100), "% confident that the true effect lies in the range between:\n"))
+  cat(paste0("   Lower bound: ", format(ci_lower, scientific = FALSE, big.mark = ","), "\n"))
+  cat(paste0("   Upper bound: ", format(ci_upper, scientific = FALSE, big.mark = ","), "\n"))
+  cat("==================================================================\n")
+}
+```
+
+# EXAMPLE
+
+## SOURCES
+
+ > https://www.princeton.edu/~otorres/DID101.pdf (DID overview)
+ > https://www.publichealth.columbia.edu/research/population-health-methods/difference-difference-estimation (DID Overview)
+ > https://www.princeton.edu/~otorres/DID101R.pdf (Instructions for examaple below)
+
+
+## STEP 1: Read in data
+
+```{r}
+
+df <- read.dta("https://www.princeton.edu/~otorres/Panel101.dta")
+```
+
+## STEP 2: Create `post period` dummy variable
+
+Once our data is read in, we'll need to create a dummy variable to indicate the time when the treatment started. 
+
+For this example, lets assume that treatment started in 1994. In this case, years before 1994 will have a
+value of 0 and 1994+ a 1. If you already have this skip this step.
+
+```{r post_dummy, echo=FALSE}
+df$time <- ifelse(df$year >= 1994, 1, 0)
+```
+
+## STEP 3: Create `treatment group` dummy variable
+
+Next, we need to create a dummy variable to identify the group exposed to the treatment. 
+
+In this example, lets assume:
+ > Countries with code 5, 6, and 7 were treated (=1)
+ > Countries with code 1-4 were not treated (=0)
+
+```{r treat_dummy, echo=FALSE}
+df$treated <- ifelse(
+  df$country == "E" |
+  df$country == "F" |
+  df$country == "G", 1, 0)
+```
+
+## STEP 4: Estimating the DID Estimator
+
+With all our new variables defined, it's now time to get the point estimate of the impact and significance of that estimate. The coefficient for ‘did’ is the differences-in-differences estimator.
+
+Note that when evaluating the estimate, we need to focus on the interaction (`treated:time` in this example).
+
+In this example, the effect is significant at 10% with the treatment having a negative effect.
+
+```{r did_estimator, echo=FALSE}
+didreg <- lm(y ~ treated * time, data = df)
+summary(didreg)
+```
+
+## STEP 5: Interpret the results
+
+This script includes a helper function to assist with interpreting the results in a way that can resonate with non-technical audiences. You will likely still need to tweak to suit your needs, but this will provide a solid starting point. 
+
+```{r, echo=FALSE}
+# Regression Interpretation
+print(interpret_did(didreg))
+
+# Build Comparison Table
+means <- df %>%
+  group_by(treated, time) %>%
+  summarize(mean_y = mean(y, na.rm = TRUE), .groups = 'drop')
+
+## Extract specific mean values for calculations
+ctrl_pre  <- means %>% filter(treated == 0, time == 0) %>% pull(mean_y)
+ctrl_post <- means %>% filter(treated == 0, time == 1) %>% pull(mean_y)
+tr_pre    <- means %>% filter(treated == 1, time == 0) %>% pull(mean_y)
+tr_post   <- means %>% filter(treated == 1, time == 1) %>% pull(mean_y)
+
+## Calculate across-time and across-group differences
+ctrl_diff <- ctrl_post - ctrl_pre
+tr_diff   <- tr_post - tr_pre
+pre_diff  <- tr_pre - ctrl_pre
+post_diff <- tr_post - ctrl_post
+
+## Calculate the actual DiD Estimate
+did_estimate <- tr_diff - ctrl_diff
+
+## Assemble into a clean, labeled 3x3 matrix
+did_table <- matrix(
+  c(ctrl_pre,  ctrl_post,  ctrl_diff,
+    tr_pre,    tr_post,    tr_diff,
+    pre_diff,  post_diff,  did_estimate),
+  nrow = 3, byrow = TRUE,
+  dimnames = list(
+    Group = c("Control Group (A)", "Treatment Group (B)", "Difference (B - A)"),
+    Period = c("Pre-Period (time=0)", "Post-Period (time=1)", "Time Difference (Post-Pre)")
+  )
+)
+
+## Print table with standard formatting (preventing scientific notation)
+options(scipen = 999)
+print(round(did_table, 2))
+
+# Create Line Chart
+## Calculate yearly averages for each group
+chart_data <- df %>%
+  group_by(year, treated) %>%
+  summarize(mean_y = mean(y, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(Group = factor(treated, levels = c(0, 1), labels = c("Control Group", "Treatment Group")))
+
+## Build the line chart
+did_plot <- ggplot(chart_data, aes(x = year, y = mean_y, color = Group, group = Group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  
+  ### Add vertical treatment intervention line between 1993 and 1994
+  geom_vline(xintercept = 1994, linetype = "dashed", color = "darkred", linewidth = 1) +
+  
+  ### Add descriptive label for the vertical line
+  annotate("text", x = 1994.2, y = max(chart_data$mean_y)*1.1, 
+           label = "Treatment Introduced", 
+           color = "darkred", fontface = "bold", hjust = 0) +
+  
+  ### Formatting labels and scales
+  scale_x_continuous(breaks = min(chart_data$year):max(chart_data$year)) +
+  scale_y_continuous(labels = scales::comma) + # Format y-axis numbers cleanly
+  scale_color_manual(values = c("Control Group" = "#4682B4", "Treatment Group" = "#E69F00")) +
+  
+  ### Labels and themes
+  labs(
+    title = "Difference-in-Differences Visual Trend",
+    subtitle = "...",
+    y = "...",
+    color = "Cohort"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.minor = element_blank()
+  )
+
+  ### Render plot in RStudio/device window
+  print(did_plot)
+
+```
+
+
+
