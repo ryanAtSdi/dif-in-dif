@@ -7,7 +7,14 @@ date: "2026-06-08"
 ```{r setup, include=FALSE}
 #knitr::opts_chunk$set(echo = TRUE)
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(foreign, dplyr, ggplot2, tidyr, scales)
+pacman::p_load(foreign, dplyr, ggplot2, tidyr, scales, did)
+
+#Further colors
+ftr_lt_blue <- "#10cee8"
+ftr_md_blue <- "#095fbf"
+ftr_dk_blue <- "#0f0f2a"
+ftr_mint <- "#00f1a1"
+ftr_red <- "#f63241"
 
 #Helper function to interpret regression results
 interpret_did <- function(didreg, term_name = "treated:time") {
@@ -76,7 +83,6 @@ interpret_did <- function(didreg, term_name = "treated:time") {
 # EXAMPLE
 
 ## SOURCES
-
  > https://www.princeton.edu/~otorres/DID101.pdf (DID overview)
  > https://www.publichealth.columbia.edu/research/population-health-methods/difference-difference-estimation (DID Overview)
  > https://www.princeton.edu/~otorres/DID101R.pdf (Instructions for examaple below)
@@ -113,6 +119,15 @@ df$treated <- ifelse(
   df$country == "E" |
   df$country == "F" |
   df$country == "G", 1, 0)
+```
+
+## STEP 3B: Create `treatment start` variable
+
+Once we have `time` and `treated` created, we can now create the `gname` variable, which will be used in our assessment of the parallel trends assumption. This `gname` variable simply returns the time period for which the treatment started in treated groups, or 0 or non-treated groups.
+
+```{r}
+
+df$gname <- 1994 * df$treated
 ```
 
 ## STEP 4: Estimating the DID Estimator
@@ -185,30 +200,33 @@ did_plot <- ggplot(chart_data, aes(x = year, y = mean_y, color = Group, group = 
   geom_point(size = 3) +
   
   ### Add vertical treatment intervention line between 1993 and 1994
-  geom_vline(xintercept = 1994, linetype = "dashed", color = "darkred", linewidth = 1) +
+  geom_vline(xintercept = 1994, linetype = "dashed", color = ftr_red, linewidth = 1) +
   
   ### Add descriptive label for the vertical line
   annotate("text", x = 1994.2, y = max(chart_data$mean_y)*1.1, 
            label = "Treatment Introduced", 
-           color = "darkred", fontface = "bold", hjust = 0) +
+           color = ftr_red, fontface = "bold", hjust = 0) +
   
   ### Formatting labels and scales
   scale_x_continuous(breaks = min(chart_data$year):max(chart_data$year)) +
   scale_y_continuous(labels = scales::comma) + # Format y-axis numbers cleanly
-  scale_color_manual(values = c("Control Group" = "#4682B4", "Treatment Group" = "#E69F00")) +
+  scale_color_manual(values = c("Control Group" = ftr_lt_blue, "Treatment Group" = ftr_md_blue)) +
+  
   
   ### Labels and themes
   labs(
     title = "Difference-in-Differences Visual Trend",
-    subtitle = "...",
-    y = "...",
-    color = "Cohort"
+    #subtitle = "...",
+    #y = "..."
   ) +
   theme_minimal(base_size = 12) +
   theme(
-    legend.position = "bottom",
+    legend.position = "right",
     plot.title = element_text(face = "bold", size = 14),
-    panel.grid.minor = element_blank()
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.title = element_blank(),
+    axis.title = element_blank()
   )
 
   ### Render plot in RStudio/device window
@@ -216,5 +234,32 @@ did_plot <- ggplot(chart_data, aes(x = year, y = mean_y, color = Group, group = 
 
 ```
 
+## QA
 
+```{r}
+df$id_numeric <- as.numeric(as.factor(df$country))
+
+# 2. Define your column names (Replace these placeholders with your actual column names)
+outcome_var   <- "y"       # The dependent variable (e.g., revenue, employment)
+time_var      <- "year"          # The time period variable (e.g., year, quarter, month)
+unit_id_var   <- "id_numeric"            # The unique identifier for units (e.g., customer_id, store_id)
+group_var     <- "gname"   # The period a unit was FIRST treated (set to 0 if never treated)
+
+# 3. Run the Group-Time Average Treatment Effects estimation
+# Note: 'xformla = ~1' assumes no covariates. Change to '~ var1 + var2' if conditioning on covariates.
+did_model <- att_gt(
+  yname   = outcome_var,
+  tname   = time_var,
+  idname  = unit_id_var,
+  gname   = group_var,
+  xformla = ~1, 
+  data    = df
+)
+
+# 4. View the statistical summary (Includes the Parallel Trends Wald Pre-Test P-value)
+summary(did_model)
+
+# 5. Plot the group-time treatment effects to visually inspect pre-trends (Red dots)
+ggdid(did_model)
+```
 
