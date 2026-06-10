@@ -8,6 +8,7 @@ date: "2026-06-08"
 > Need to figure out the best way to handle `id_var`
 > Need to add notes around updating STEP 2b
 > Need to QA - i get different results with `country` vs `id_numeric`
+> Need to enhance flow (e.g., STOP if PTA violated)
 
 ## SETUP
 
