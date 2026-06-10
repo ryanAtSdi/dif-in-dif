@@ -4,19 +4,26 @@ output: html_document
 date: "2026-06-08"
 ---
 
+# NOTES
+> Need to figure out the best way to handle `id_var`
+> Need to add notes around updating STEP 2b
+> Need to QA - i get different results with `country` vs `id_numeric`
+
+## SETUP
+
 ```{r setup, include=FALSE}
 #knitr::opts_chunk$set(echo = TRUE)
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(foreign, dplyr, ggplot2, tidyr, scales, did)
 
-#Further colors
+# Further colors
 ftr_lt_blue <- "#10cee8"
 ftr_md_blue <- "#095fbf"
 ftr_dk_blue <- "#0f0f2a"
 ftr_mint <- "#00f1a1"
 ftr_red <- "#f63241"
 
-#Helper function to interpret regression results
+# Helper function to interpret regression results
 interpret_did <- function(didreg, term_name = "treated:time") {
   # 1. Extract the coefficients matrix from the summary object
   coef_matrix <- summary(didreg)$coefficients
@@ -80,33 +87,35 @@ interpret_did <- function(didreg, term_name = "treated:time") {
 }
 ```
 
-# EXAMPLE
+## DEFINE VARIABLES
 
-## SOURCES
- > https://www.princeton.edu/~otorres/DID101.pdf (DID overview)
- > https://www.publichealth.columbia.edu/research/population-health-methods/difference-difference-estimation (DID Overview)
- > https://www.princeton.edu/~otorres/DID101R.pdf (Instructions for examaple below)
-
+```{r}
+t_start <- 1994  # start date of the treatment/intervention
+t_var <- "year"  # date column name
+d_var <- "y"     # The dependent variable (e.g., revenue, employment)
+id_var <- "country" # The unique identifier for units (e.g., customer_id, store_id)
+```
 
 ## STEP 1: Read in data
 
 ```{r}
-
 df <- read.dta("https://www.princeton.edu/~otorres/Panel101.dta")
 ```
 
-## STEP 2: Create `post period` dummy variable
+## STEP 2: Create new variables
 
 Once our data is read in, we'll need to create a dummy variable to indicate the time when the treatment started. 
+
+### STEP 2a: Create `post period` dummy variable
 
 For this example, lets assume that treatment started in 1994. In this case, years before 1994 will have a
 value of 0 and 1994+ a 1. If you already have this skip this step.
 
 ```{r post_dummy, echo=FALSE}
-df$time <- ifelse(df$year >= 1994, 1, 0)
+df$time <- ifelse(df[[t_var]] >= t_start, 1, 0)
 ```
 
-## STEP 3: Create `treatment group` dummy variable
+### STEP 2b: Create `treatment group` dummy variable
 
 Next, we need to create a dummy variable to identify the group exposed to the treatment. 
 
@@ -121,13 +130,37 @@ df$treated <- ifelse(
   df$country == "G", 1, 0)
 ```
 
-## STEP 3B: Create `treatment start` variable
+### STEP 2c: Create `treatment start` variable
 
 Once we have `time` and `treated` created, we can now create the `gname` variable, which will be used in our assessment of the parallel trends assumption. This `gname` variable simply returns the time period for which the treatment started in treated groups, or 0 or non-treated groups.
 
 ```{r}
+df$gname <- t_start * df$treated
+```
 
-df$gname <- 1994 * df$treated
+## STEP 3: Validate parallel trends assumption
+
+<explain this step>
+
+```{r}
+df$id_numeric <- as.numeric(as.factor(df[[id_var]]))
+
+# 1. Run the Group-Time Average Treatment Effects estimation
+# Note: 'xformla = ~1' assumes no covariates. Change to '~ var1 + var2' if conditioning on covariates.
+did_model <- att_gt(
+  yname   = d_var,
+  tname   = t_var,
+  idname  = "id_numeric",
+  gname   = "gname",
+  xformla = ~1, 
+  data    = df
+)
+
+# 2. View the statistical summary (Includes the Parallel Trends Wald Pre-Test P-value)
+summary(did_model)
+
+# 3. Plot the group-time treatment effects to visually inspect pre-trends (Red dots)
+ggdid(did_model)
 ```
 
 ## STEP 4: Estimating the DID Estimator
@@ -234,32 +267,13 @@ did_plot <- ggplot(chart_data, aes(x = year, y = mean_y, color = Group, group = 
 
 ```
 
-## QA
+## SOURCES
+ > https://www.princeton.edu/~otorres/DID101.pdf (DID overview)
+ > https://www.publichealth.columbia.edu/research/population-health-methods/difference-difference-estimation (DID Overview)
+ > https://www.princeton.edu/~otorres/DID101R.pdf (Example below)
+ > https://bcallaway11.github.io/did/articles/did-basics.html (did package documentation)
 
-```{r}
-df$id_numeric <- as.numeric(as.factor(df$country))
 
-# 2. Define your column names (Replace these placeholders with your actual column names)
-outcome_var   <- "y"       # The dependent variable (e.g., revenue, employment)
-time_var      <- "year"          # The time period variable (e.g., year, quarter, month)
-unit_id_var   <- "id_numeric"            # The unique identifier for units (e.g., customer_id, store_id)
-group_var     <- "gname"   # The period a unit was FIRST treated (set to 0 if never treated)
 
-# 3. Run the Group-Time Average Treatment Effects estimation
-# Note: 'xformla = ~1' assumes no covariates. Change to '~ var1 + var2' if conditioning on covariates.
-did_model <- att_gt(
-  yname   = outcome_var,
-  tname   = time_var,
-  idname  = unit_id_var,
-  gname   = group_var,
-  xformla = ~1, 
-  data    = df
-)
 
-# 4. View the statistical summary (Includes the Parallel Trends Wald Pre-Test P-value)
-summary(did_model)
-
-# 5. Plot the group-time treatment effects to visually inspect pre-trends (Red dots)
-ggdid(did_model)
-```
 
